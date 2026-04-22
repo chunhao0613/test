@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16
+    container_name: bookkeeping-db
+    environment:
+      POSTGRES_USER: bookkeeper
+      POSTGRES_PASSWORD: bookkeeper
+      POSTGRES_DB: bookkeeping
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookkeeper -d bookkeeping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    build: .
+    container_name: bookkeeping-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://bookkeeper:bookkeeper@db:5432/bookkeeping
+      SECRET_KEY: change-me-in-compose
+    ports:
+      - "8000:8000"
+  
+  frontend:
+    build: ./frontend
+    container_name: bookkeeping-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "80:80"
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: bookkeeping-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  prometheus_data:

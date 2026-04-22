@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>簡單記帳系統</title>
+	<style>
+		:root { color-scheme: light; font-family: Inter, system-ui, sans-serif; }
+		body { margin: 0; background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); color: #0f172a; }
+		main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
+		.card { background: rgba(255,255,255,0.9); border: 1px solid #e2e8f0; border-radius: 20px; box-shadow: 0 20px 50px rgba(15,23,42,0.08); padding: 20px; margin-bottom: 20px; }
+		h1, h2 { margin: 0 0 12px; }
+		.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+		label { display: block; font-size: 14px; margin-bottom: 10px; }
+		input, select, button, textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 12px; border: 1px solid #cbd5e1; font: inherit; }
+		button { background: #2563eb; color: white; border: none; cursor: pointer; }
+		button.secondary { background: #334155; }
+		.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+		.muted { color: #64748b; }
+		.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+		.summary div { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 14px; }
+		ul { list-style: none; padding: 0; margin: 0; }
+		li { border-top: 1px solid #e2e8f0; padding: 12px 0; }
+		.hidden { display: none; }
+		.danger { color: #b91c1c; }
+	</style>
+</head>
+<body>
+<main>
+	<div class="card">
+		<h1>簡單記帳系統</h1>
+		<p class="muted">前端、後端、資料庫與 JWT 驗證都先接起來，方便後續練 Docker 與部署。</p>
+	</div>
+
+	<div id="authPanel" class="grid">
+		<section class="card">
+			<h2>註冊</h2>
+			<label>Email <input id="registerEmail" type="email" /></label>
+			<label>密碼 <input id="registerPassword" type="password" minlength="8" /></label>
+			<button onclick="registerUser()">建立帳號</button>
+		</section>
+		<section class="card">
+			<h2>登入</h2>
+			<label>Email <input id="loginEmail" type="email" /></label>
+			<label>密碼 <input id="loginPassword" type="password" /></label>
+			<button onclick="loginUser()">登入</button>
+		</section>
+	</div>
+
+	<section id="dashboard" class="card hidden">
+		<div class="row" style="align-items: center;">
+			<div>
+				<h2>儀表板</h2>
+				<div id="userInfo" class="muted"></div>
+			</div>
+			<div style="display:flex; gap:12px; justify-content:flex-end;">
+				<button class="secondary" onclick="loadEverything()">重新整理</button>
+				<button class="secondary" onclick="logoutUser()">登出</button>
+			</div>
+		</div>
+	</section>
+
+	<section id="appPanel" class="grid hidden">
+		<section class="card">
+			<h2>新增收支</h2>
+			<label>類型
+				<select id="transactionType">
+					<option value="income">收入</option>
+					<option value="expense">支出</option>
+				</select>
+			</label>
+			<label>金額 <input id="transactionAmount" type="number" min="0" step="0.01" /></label>
+			<label>分類 <input id="transactionCategory" type="text" placeholder="餐飲、薪資..." /></label>
+			<label>備註 <textarea id="transactionNote" rows="3"></textarea></label>
+			<label>發生時間 <input id="transactionHappenedAt" type="datetime-local" /></label>
+			<button onclick="createTransaction()">新增</button>
+		</section>
+
+		<section class="card">
+			<h2>月總覽</h2>
+			<div class="summary">
+				<div><div class="muted">收入</div><strong id="incomeTotal">0</strong></div>
+				<div><div class="muted">支出</div><strong id="expenseTotal">0</strong></div>
+				<div><div class="muted">結餘</div><strong id="balanceTotal">0</strong></div>
+			</div>
+		</section>
+
+		<section class="card" style="grid-column: 1 / -1;">
+			<h2>交易列表</h2>
+			<div class="row" style="margin-bottom: 12px;">
+				<label>類型篩選
+					<select id="filterType">
+						<option value="">全部</option>
+						<option value="income">收入</option>
+						<option value="expense">支出</option>
+					</select>
+				</label>
+				<label>分類篩選
+					<input id="filterCategory" type="text" placeholder="餐飲、薪資..." />
+				</label>
+				<label>月份
+					<input id="filterMonth" type="month" />
+				</label>
+			</div>
+			<div style="display: flex; gap: 12px; margin-bottom: 12px;">
+				<button class="secondary" onclick="loadEverything()">套用篩選</button>
+				<button class="secondary" onclick="resetFilters()">重設篩選</button>
+			</div>
+			<ul id="transactionList"></ul>
+		</section>
+	</section>
+
+	<p id="message" class="muted"></p>
+</main>
+
+<script>
+	const message = (text, isError = false) => {
+		const element = document.getElementById('message');
+		element.textContent = text;
+		element.className = isError ? 'muted danger' : 'muted';
+	};
+
+	const normalizeErrorDetail = (detail, status) => {
+		if (Array.isArray(detail)) {
+			return detail
+				.map((item) => {
+					const field = Array.isArray(item?.loc) ? item.loc.join('.') : 'field';
+					const msg = item?.msg || 'invalid value';
+					return `${field}: ${msg}`;
+				})
+				.join(' | ');
+		}
+		if (typeof detail === 'string' && detail.trim()) {
+			return detail;
+		}
+		return `Request failed (${status})`;
+	};
+
+	const request = async (url, options = {}) => {
+		const response = await fetch(url, {
+			headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+			credentials: 'include',
+			...options,
+		});
+		const text = await response.text();
+		let data = null;
+		if (text) {
+			try { data = JSON.parse(text); } catch { data = text; }
+		}
+		if (!response.ok) {
+			const detail = normalizeErrorDetail(data && data.detail ? data.detail : null, response.status);
+			throw new Error(detail);
+		}
+		return data;
+	};
+
+	const showApp = (visible) => {
+		document.getElementById('authPanel').classList.toggle('hidden', visible);
+		document.getElementById('dashboard').classList.toggle('hidden', !visible);
+		document.getElementById('appPanel').classList.toggle('hidden', !visible);
+	};
+
+	const currentMonthValue = () => {
+		const now = new Date();
+		return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+	};
+
+	let transactionsCache = [];
+
+	const formatMoney = (value) => Number(value || 0).toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+	const buildTransactionQuery = () => {
+		const params = new URLSearchParams();
+		const type = document.getElementById('filterType').value;
+		const category = document.getElementById('filterCategory').value.trim();
+		const month = document.getElementById('filterMonth').value;
+		if (type) params.set('tx_type', type);
+		if (category) params.set('category', category);
+		if (month) params.set('month', month);
+		return params.toString();
+	};
+
+	const setDefaultFilterMonth = () => {
+		const monthInput = document.getElementById('filterMonth');
+		if (!monthInput.value) {
+			monthInput.value = currentMonthValue();
+		}
+	};
+
+	const resetFilters = () => {
+		document.getElementById('filterType').value = '';
+		document.getElementById('filterCategory').value = '';
+		document.getElementById('filterMonth').value = currentMonthValue();
+		loadEverything();
+	};
+
+	async function registerUser() {
+		try {
+			const email = document.getElementById('registerEmail').value.trim();
+			const password = document.getElementById('registerPassword').value;
+			if (!email) {
+				message('請輸入 Email', true);
+				return;
+			}
+			if (password.length < 8) {
+				message('密碼至少要 8 碼', true);
+				return;
+			}
+			await request('/auth/register', {
+				method: 'POST',
+				body: JSON.stringify({
+					email,
+					password,
+				}),
+			});
+			message('註冊完成，請登入');
+		} catch (error) {
+			message(error.message, true);
+		}
+	}
+
+	async function loginUser() {
+		try {
+			await request('/auth/login', {
+				method: 'POST',
+				body: JSON.stringify({
+					email: document.getElementById('loginEmail').value,
+					password: document.getElementById('loginPassword').value,
+				}),
+			});
+			message('登入成功');
+			await loadEverything();
+		} catch (error) {
+			message(error.message, true);
+		}
+	}
+
+	async function logoutUser() {
+		try {
+			await request('/auth/logout', { method: 'POST' });
+			showApp(false);
+			message('已登出');
+		} catch (error) {
+			message(error.message, true);
+		}
+	}
+
+	async function createTransaction() {
+		try {
+			const happenedAtInput = document.getElementById('transactionHappenedAt').value;
+			await request('/transactions', {
+				method: 'POST',
+				body: JSON.stringify({
+					type: document.getElementById('transactionType').value,
+					amount: document.getElementById('transactionAmount').value,
+					category: document.getElementById('transactionCategory').value || null,
+					note: document.getElementById('transactionNote').value || null,
+					happened_at: happenedAtInput ? new Date(happenedAtInput).toISOString() : null,
+				}),
+			});
+			message('交易已新增');
+			await loadEverything();
+		} catch (error) {
+			message(error.message, true);
+		}
+	}
+
+	async function loadEverything() {
+		try {
+			setDefaultFilterMonth();
+			const selectedMonth = document.getElementById('filterMonth').value;
+			const monthQuery = selectedMonth ? `?month=${encodeURIComponent(selectedMonth)}` : '';
+			const user = await request('/auth/me');
+			showApp(true);
+			document.getElementById('userInfo').textContent = `目前登入：${user.email}`;
+			const summary = await request(`/summary/monthly${monthQuery}`);
+			document.getElementById('incomeTotal').textContent = formatMoney(summary.income_total);
+			document.getElementById('expenseTotal').textContent = formatMoney(summary.expense_total);
+			document.getElementById('balanceTotal').textContent = formatMoney(summary.balance);
+			const query = buildTransactionQuery();
+			const items = await request(`/transactions${query ? `?${query}` : ''}`);
+			transactionsCache = items;
+			const list = document.getElementById('transactionList');
+			list.innerHTML = items.map((item) => `
+					<li>
+						<strong>${item.type}</strong> · ${formatMoney(item.amount)}
+						<div class="muted">${item.category || '-'} · ${item.note || '-'} · ${new Date(item.happened_at).toLocaleString('zh-TW')}</div>
+						<button class="secondary" onclick="editTransaction(${item.id})">編輯</button>
+						<button class="secondary" onclick="deleteTransaction(${item.id})">刪除</button>
+					</li>
+			`).join('') || '<li class="muted">尚無資料</li>';
+		} catch (error) {
+			if (error.message === 'Not authenticated') {
+				showApp(false);
+				message('');
+				return;
+			}
+			showApp(false);
+			message(error.message, true);
+		}
+	}
+
+	async function deleteTransaction(id) {
+		try {
+			await request(`/transactions/${id}`, { method: 'DELETE' });
+			await loadEverything();
+		} catch (error) {
+			message(error.message, true);
+		}
+	}
+
+	async function editTransaction(id) {
+		const target = transactionsCache.find((item) => item.id === id);
+		if (!target) {
+			message('找不到交易資料', true);
+			return;
+		}
+		const nextType = window.prompt('類型 income 或 expense', target.type);
+		if (nextType === null) return;
+		const nextAmount = window.prompt('金額', target.amount);
+		if (nextAmount === null) return;
+		const nextCategory = window.prompt('分類，可留空', target.category || '') ?? '';
+		const nextNote = window.prompt('備註，可留空', target.note || '') ?? '';
+		try {
+			await request(`/transactions/${id}`, {
+				method: 'PATCH',
+				body: JSON.stringify({
+					type: nextType,
+					amount: nextAmount,
+					category: nextCategory || null,
+					note: nextNote || null,
+				}),
+			});
+			message('交易已更新');
+			await loadEverything();
+		} catch (error) {
+			message(error.message, true);
+		}
+	}
+
+	setDefaultFilterMonth();
+	loadEverything();
+</script>
+</body>
+</html>
